@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use agent_html_lint::cli::HELP;
 use agent_html_lint::{Cli, CliAction, Report, run};
 use serde::Serialize;
 
@@ -24,7 +25,7 @@ fn main() -> ExitCode {
                 schema_version: 1,
                 status: "ok",
                 kind: "usage",
-                value: "html-lint [--rules all|common|ID,...] [--threads N] [--max-diagnostics N] [--stdin-filename PATH] [PATH|-]...",
+                value: HELP,
             }),
             0,
         ),

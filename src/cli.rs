@@ -18,6 +18,8 @@ pub enum CliAction {
     Version,
 }
 
+pub const HELP: &str = "LintBolt — fast, JSON-only HTML linter\n\nUsage: html-lint [OPTIONS] [PATH|-]...\n\nOptions:\n      --rules <all|common|ID,...>  Select the rules to run (default: all)\n  -j, --threads <N>                Set the worker count for multi-file scans\n      --max-diagnostics <N>        Limit findings per file\n      --stdin-filename <PATH>      Name HTML read from standard input\n  -h, --help                       Show this help section\n  -V, --version                    Show the version\n\nPaths may be files, directories, or '-' for standard input.\nOutput is one JSON document; exit status 0 is clean, 1 reports findings, and 2 reports an operational error.";
+
 impl Cli {
     pub fn parse<I>(args: I) -> Result<CliAction, String>
     where
@@ -122,5 +124,13 @@ mod tests {
         };
         assert_eq!(cli.threads, Some(3));
         assert_eq!(cli.rules, RuleSet::COMMON);
+    }
+
+    #[test]
+    fn parses_help_flag() {
+        assert!(matches!(
+            Cli::parse(["html-lint", "--help"].map(str::to_owned)),
+            Ok(CliAction::Help)
+        ));
     }
 }

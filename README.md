@@ -11,6 +11,16 @@
 
 LintBolt is built for agents that create and revise HTML artifacts repeatedly. Give it files or directories, receive one JSON document, and use the exit status to decide what happens next.
 
+## Get help
+
+Show the LintBolt command reference with either `--help` or `-h`:
+
+```sh
+html-lint --help
+```
+
+The response is a single JSON document with `kind: "usage"`, so agents can consume it without a separate human-oriented output mode.
+
 ## Verify an HTML artifact
 
 Build the release binary:
