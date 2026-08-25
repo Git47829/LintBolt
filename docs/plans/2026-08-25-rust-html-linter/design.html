@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blazingly fast multithreaded HTML linter — design doc</title>
+<style>
+  :root {
+    --text: #202124;
+    --text-secondary: #5f6368;
+    --accent: #1a73e8;
+    --accent-soft: #e8f0fe;
+    --border: #dadce0;
+    --surface: #ffffff;
+    --surface-subtle: #f8f9fa;
+    --code-bg: #f1f3f4;
+    --key: #1e8e3e;
+    --key-bg: #e6f4ea;
+    --caution: #f9ab00;
+    --caution-bg: #fef7e0;
+    --sans: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'Roboto Mono', Menlo, Consolas, 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 760px) 220px;
+    gap: 64px;
+    max-width: 1060px;
+    margin: 0 auto;
+    padding: 64px 24px 160px;
+  }
+  main { min-width: 0; }
+
+  h1 {
+    margin: 0 0 8px;
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: -0.2px;
+    line-height: 1.3;
+  }
+  h2 {
+    margin: 64px 0 16px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.35;
+  }
+  h3 { margin: 36px 0 12px; font-size: 20px; font-weight: 500; }
+  h4 { margin: 28px 0 8px; font-size: 16px; font-weight: 500; }
+  p { margin: 0 0 16px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  strong { font-weight: 500; }
+
+  .metadata { margin: 0 0 48px; color: var(--text-secondary); font-size: 14px; }
+  .metadata .status {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    vertical-align: 1px;
+  }
+
+  code {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--code-bg);
+    font-family: var(--mono);
+    font-size: 0.875em;
+  }
+  pre {
+    margin: 0 0 20px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--code-bg);
+    line-height: 1.6;
+  }
+  pre code { padding: 0; background: none; font-size: 13px; }
+
+  table { width: 100%; margin: 0 0 24px; border-collapse: collapse; font-size: 14px; }
+  th, td {
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--surface-subtle); font-weight: 500; }
+  tbody tr:hover { background: var(--surface-subtle); }
+  .comparison-wrap { margin: 0 0 24px; overflow-x: auto; }
+  .comparison-wrap table { min-width: 940px; margin-bottom: 0; }
+  .comparison-wrap tbody tr.ours { background: var(--accent-soft); }
+  .comparison-wrap tbody tr.ours:hover { background: #dce8fc; }
+  .badge {
+    display: inline-block;
+    margin: 0 4px 4px 0;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .badge.lead { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+  .callout {
+    margin: 0 0 24px;
+    padding: 16px 20px;
+    border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    background: var(--accent-soft);
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label { font-weight: 500; }
+  .callout.key { border-color: var(--key); background: var(--key-bg); }
+  .callout.caution { border-color: var(--caution); background: var(--caution-bg); }
+
+  figure { margin: 32px 0; text-align: center; }
+  figure svg { width: 100%; max-width: 100%; height: auto; }
+  figcaption { margin-top: 12px; color: var(--text-secondary); font-size: 14px; text-align: left; }
+
+  .approach {
+    margin-bottom: 32px;
+    padding: 8px 28px 20px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .approach h2 { margin-top: 24px; padding-top: 0; border-top: none; }
+  .approach .tagline { margin: -8px 0 20px; color: var(--text-secondary); font-size: 15px; }
+
+  .metric { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .small { color: var(--text-secondary); font-size: 14px; }
+
+  #toc {
+    position: sticky;
+    top: 64px;
+    align-self: start;
+    max-height: calc(100vh - 128px);
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  #toc .toc-title {
+    margin-bottom: 12px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+  }
+  #toc ul { margin: 0; padding: 0; list-style: none; }
+  #toc li { margin: 0 0 2px; }
+  #toc a {
+    display: block;
+    padding: 4px 12px;
+    border-left: 2px solid var(--border);
+    color: var(--text-secondary);
+  }
+  #toc a:hover { color: var(--accent); text-decoration: none; }
+  #toc a.active { border-left-color: var(--accent); color: var(--accent); font-weight: 500; }
+  #toc .lvl-3 a { padding-left: 24px; }
+
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 40px 20px 100px; }
+    #toc {
+      position: static;
+      order: -1;
+      max-height: none;
+      margin-bottom: 40px;
+      padding: 16px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+  }
+  @media print {
+    #toc { display: none; }
+    .layout { display: block; max-width: none; }
+    h2 { page-break-after: avoid; }
+    figure, table, .callout { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<main>
+
+  <h1>Blazingly fast multithreaded HTML linter</h1>
+  <p class="metadata">2026-08-25 · Codex · <span class="status">Implemented · Approach B</span></p>
+
+  <h2 id="overview">Overview</h2>
+  <p>This project creates a greenfield Rust command-line linter for coding agents that repeatedly generate, inspect, and repair HTML artifacts. The primary loop is one agent invoking one native binary on one recently written file or standard input, receiving compact deterministic diagnostics, and applying the next edit without waiting for a language runtime or remote service. Directory-wide continuous integration (CI) remains a secondary use case.</p>
+  <p>“Blazingly fast” becomes a competitive acceptance contract rather than a slogan. The first release includes a three-file agent-artifact benchmark against Biome, HTMLHint, HTML-Validate, Markuplint, and the Nu Html Checker; bounded-memory checks; cold-process latency; and derived multi-file scaling measurements. Done means the linter is correct on its declared HTML and rule envelope, produces the same output at every thread count, and proves a material lead over the fastest qualifying alternative on named hardware.</p>
+
+  <div class="callout key">
+    <p><span class="label">Measured outcome:</span> The implementation and corpus now exist. On the recorded 8-way Apple ARM machine, the final common-rule build measured 3.45 ms, 6.87 ms, and 57.10 ms median on the three fixtures. It beat the fastest qualifying competitor on each fixture, including a 1.55× lead over Biome on 16 MiB. Raw samples and exclusions are stored in <code>benchmarks/results/</code>.</p>
+  </div>
+
+  <h2 id="goals">Goals and non-goals</h2>
+
+  <h3 id="goals-list">Goals</h3>
+  <ul>
+    <li>Discover <code>.html</code> and <code>.htm</code> files while respecting <code>.gitignore</code>, <code>.ignore</code>, explicit globs, symlink policy, and a configurable maximum file size.</li>
+    <li>Accept a direct path or <code>stdin</code> plus a logical filename, with a compact JSON diagnostic format designed for agent tool calls and bounded output budgets.</li>
+    <li>Use a serial caller-thread fast path for one small artifact when starting or scheduling a worker pool costs more than the available parallel work.</li>
+    <li>Use all available cores across independent files while keeping single-file parser state isolated to one worker.</li>
+    <li>Report rule ID, severity, file, byte span, line, column, primary message, and optional help in deterministic path-and-offset order.</li>
+    <li>Expose a typed rule interface that avoids per-token heap allocation and makes rule state local to a document.</li>
+    <li>Emit compact JSON only. Human-oriented terminal rendering, ANSI styling, and Static Analysis Results Interchange Format (SARIF) are outside version one.</li>
+    <li>Target at least <span class="metric">750 MB/s</span> for the lexical-rule benchmark and <span class="metric">250 MB/s</span> for the full structural-rule benchmark on an eight-physical-core reference machine with a warm filesystem cache.</li>
+    <li>Run at least <span class="metric">1.5× faster</span> than the fastest qualifying existing tool on the large-repository common-rule profile, measured end to end with pinned versions and equivalent findings.</li>
+    <li>Keep the small clean artifact at or below the fastest qualifying tool’s median cold-process latency, with a target <span class="metric">P95 ≤25 ms</span> on the named reference machine.</li>
+    <li>Keep the benchmark run below <span class="metric">256 MiB</span> peak resident memory at eight workers, excluding the operating-system page cache.</li>
+    <li>Track cycles per input byte, branch-miss rate, and last-level-cache misses alongside wall time so a throughput regression can be attributed to scheduling, memory locality, or control flow.</li>
+    <li>Test tokenizer behavior, rule behavior, deterministic parallel output, configuration, CLI snapshots, fuzz properties, and performance regressions.</li>
+  </ul>
+
+  <h3 id="non-goals">Non-goals</h3>
+  <ul>
+    <li>Execute JavaScript, compute CSS, fetch network resources, or reproduce a browser rendering engine.</li>
+    <li>Claim complete conformance checking for every requirement in the continuously maintained HTML Standard in the first release.</li>
+    <li>Parse framework template languages such as JSX, Vue, Handlebars, or Jinja unless a later dialect layer defines their syntax.</li>
+    <li>Ship autofixes, a language server, dynamic native plugins, or a daemon before the core CLI and rule contract stabilize.</li>
+    <li>Parallelize arbitrary byte ranges inside one HTML document; tokenizer state makes file-level parallelism the safe default.</li>
+  </ul>
+
+  <h2 id="current-state">Current state</h2>
+  <p>The workspace is empty: it has no Cargo package, source files, tests, configuration, Git history, or local architecture conventions. Today an agent-created HTML artifact has no fast verification path through this project, as Figure 1 shows. This makes every public interface reversible at the design stage, but it also leaves product scope and compatibility requirements unresolved.</p>
+
+  <figure>
+    <svg viewBox="0 0 760 260" role="img" aria-labelledby="current-title current-desc">
+      <title id="current-title">Current agent HTML verification loop</title>
+      <desc id="current-desc">An agent-created HTML artifact reaches a tooling gap, delaying structured feedback and the next repair.</desc>
+      <defs>
+        <marker id="current-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="#5f6368"/>
+        </marker>
+      </defs>
+      <rect width="760" height="260" fill="#ffffff"/>
+
+      <line x1="200" y1="120" x2="292" y2="120" stroke="#5f6368" stroke-width="1.2" marker-end="url(#current-arrow)"/>
+      <line x1="460" y1="120" x2="552" y2="120" stroke="#5f6368" stroke-width="1.2" marker-end="url(#current-arrow)"/>
+      <rect x="224" y="96" width="48" height="12" rx="4" fill="#ffffff"/>
+      <text x="248" y="104" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">VERIFY</text>
+      <rect x="484" y="96" width="48" height="12" rx="4" fill="#ffffff"/>
+      <text x="508" y="104" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">FEEDBACK</text>
+
+      <rect x="40" y="80" width="160" height="80" rx="8" fill="#f8f9fa" stroke="#5f6368" stroke-width="1"/>
+      <rect x="52" y="92" width="40" height="16" rx="4" fill="#ffffff" stroke="#dadce0"/>
+      <text x="72" y="104" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">AGENT</text>
+      <text x="120" y="128" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">HTML artifact</text>
+      <text x="120" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">generated · edited</text>
+
+      <rect x="300" y="80" width="160" height="80" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+      <rect x="312" y="92" width="32" height="16" rx="4" fill="#ffffff" stroke="#1a73e8"/>
+      <text x="328" y="104" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">GAP</text>
+      <text x="380" y="128" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">No fast verifier</text>
+      <text x="380" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">no native agent path</text>
+
+      <rect x="560" y="80" width="160" height="80" rx="8" fill="#f8f9fa" stroke="#5f6368" stroke-width="1"/>
+      <rect x="572" y="92" width="24" height="16" rx="4" fill="#ffffff" stroke="#dadce0"/>
+      <text x="584" y="104" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">LOOP</text>
+      <text x="640" y="128" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Delayed repair</text>
+      <text x="640" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">extra setup · weak signal</text>
+
+      <line x1="32" y1="208" x2="728" y2="208" stroke="#dadce0" stroke-width="1"/>
+      <text x="32" y="228" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">LEGEND</text>
+      <rect x="136" y="220" width="12" height="12" rx="4" fill="#e8f0fe" stroke="#1a73e8"/>
+      <text x="156" y="230" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">missing capability</text>
+      <rect x="288" y="220" width="12" height="12" rx="4" fill="#f8f9fa" stroke="#5f6368"/>
+      <text x="308" y="230" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">agent workflow state</text>
+    </svg>
+    <figcaption><strong>Figure 1.</strong> The greenfield workspace has no low-latency verification path for an agent-created HTML artifact.</figcaption>
+  </figure>
+
+  <h3 id="constraints">Constraints and dependency assumptions</h3>
+  <ul>
+    <li>HTML tokenization is stateful within a document. The architecture gains safe parallelism by processing documents independently instead of splitting arbitrary byte ranges.</li>
+    <li><a href="https://docs.rs/html5gum/latest/html5gum/">html5gum</a> provides WHATWG tokenization with exact source spans and callback/custom emitters. Approach B uses that span-aware streaming API because precise JSON diagnostics cannot be recovered reliably from html5ever's public token sink.</li>
+    <li><a href="https://docs.rs/rayon/latest/rayon/">Rayon</a> provides work-stealing parallel iterators and configurable thread pools. <a href="https://docs.rs/ignore/latest/ignore/struct.WalkBuilder.html"><code>ignore::WalkBuilder</code></a> provides parallel, Git-aware filesystem traversal.</li>
+    <li>The <a href="https://github.com/whatwg/html">HTML Standard</a> changes continuously. Rule documentation must identify its supported semantics and avoid implying total validator coverage.</li>
+    <li>The implementation targets the stable Rust toolchain available on the benchmark machine. A published minimum supported Rust version (MSRV) requires dependency re-evaluation before release.</li>
+    <li>Diagnostic ordering must not depend on task completion order. Workers return file-local vectors; one collector sorts and renders after all tasks finish.</li>
+    <li>Most agent invocations touch one small or medium artifact. Automatic scheduling must avoid filesystem walks and thread-pool work unless the input set or byte count crosses a benchmark-selected threshold.</li>
+  </ul>
+
+  <h3 id="existing-tools">Available tools and marked differences</h3>
+  <p>The comparison covers actively documented tools available on 2026-08-25. It compares product architecture and scope, not unmeasured speed. The highlighted row marks this project’s intended differentiation; the benchmark contract following the table must prove it.</p>
+
+  <div class="comparison-wrap" role="region" aria-label="Existing HTML tool comparison" tabindex="0">
+    <table>
+      <thead>
+        <tr>
+          <th>Tool</th>
+          <th>Runtime and delivery</th>
+          <th>Document model and scope</th>
+          <th>Extension and dialect story</th>
+          <th>Marked difference</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="ours">
+          <td><strong>This project</strong><br><span class="badge lead">TARGET LEADER</span></td>
+          <td>Native Rust binary; no language runtime at execution</td>
+          <td>One-pass HTML token stream, compact document facts, a serial one-artifact fast path, and file-level work stealing when profitable</td>
+          <td>Compiled typed rule API; static HTML first; dialect adapters deferred</td>
+          <td><strong>Performance is release-blocking:</strong> fastest qualifying cold agent loop plus ≥1.5× throughput on the large generated artifact</td>
+        </tr>
+        <tr>
+          <td><a href="https://biomejs.dev/internals/language-support/"><strong>Biome</strong></a><br><span class="badge">RUST RIVAL</span></td>
+          <td>Native Rust tool with JavaScript-package distribution options</td>
+          <td>Broad multi-language parser and linter; HTML parsing and linting are supported</td>
+          <td>HTML plugin support is currently unavailable; Vue, Svelte, and Astro support remains experimental</td>
+          <td>Broader language platform and the strongest likely speed rival; this project narrows scope to win on HTML throughput</td>
+        </tr>
+        <tr>
+          <td><a href="https://github.com/htmlhint/HTMLHint"><strong>HTMLHint</strong></a><br><span class="badge">NODE.JS</span></td>
+          <td>Node.js 20+ package and CLI; browser/programmatic use also documented</td>
+          <td>Configurable static analysis over HTML files, directories, globs, and URLs</td>
+          <td>Custom rule files and rule directories</td>
+          <td>Mature JavaScript rule ecosystem; this project targets a lower-overhead native CLI and explicit multicore scheduling</td>
+        </tr>
+        <tr>
+          <td><a href="https://html-validate.org/usage/"><strong>HTML-Validate</strong></a><br><span class="badge">NODE.JS</span></td>
+          <td>Node.js package, CLI, and browser bundle</td>
+          <td>Strict, non-forgiving offline HTML validation; supports full documents and component fragments</td>
+          <td>Plugins, transformers, presets, and template integrations</td>
+          <td>Stronger fragment and integration story; this project trades that breadth for a fused hot path and bounded worker state</td>
+        </tr>
+        <tr>
+          <td><a href="https://markuplint.dev/docs/guides"><strong>Markuplint</strong></a><br><span class="badge">NODE.JS</span></td>
+          <td>Node.js 18.18+ package and CLI</td>
+          <td>Large conformance, accessibility, style, and maintainability rule catalog</td>
+          <td>Custom parsers, plugins, specifications, presets, and framework support</td>
+          <td>Wider semantic and dialect coverage; this project targets fewer built-in abstractions and higher end-to-end throughput</td>
+        </tr>
+        <tr>
+          <td><a href="https://github.com/validator/validator"><strong>Nu Html Checker</strong></a><br><span class="badge">JAVA / SERVICE</span></td>
+          <td>Java archive, self-contained binaries, Docker image, CLI, or persistent HTTP service</td>
+          <td>Standards-oriented checking for HTML, CSS, and SVG</td>
+          <td>Server and REST deployment rather than a small compiled rule-plugin interface</td>
+          <td>Deep conformance breadth and warm-service mode; this project targets repository-local HTML lint latency and a single small binary</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="small">A blank or undocumented performance feature is not treated as absent. The implementation benchmark records exact versions, commands, enabled rules, exclusions, and output adapters so readers can reproduce every comparison.</p>
+
+  <h3 id="performance-contract">Performance claim contract</h3>
+  <p>The project earns the word “faster” through a correctness-first benchmark. Figure 2 shows the release gate; a timing result does not count when a tool produces a materially different finding set.</p>
+  <ul>
+    <li><strong>Competitors:</strong> Pin Biome, HTMLHint, HTML-Validate, Markuplint, and Nu Html Checker releases in a lock file. Measure the Nu checker both as a standalone CLI and as a prewarmed local service.</li>
+    <li><strong>Primary fixtures:</strong> Version the three agent-oriented HTML files defined in the next section, including deterministic generation seeds, exact byte sizes, content hashes, and expected finding manifests.</li>
+    <li><strong>Profiles:</strong> Run syntax-only, common structural rules, and each tool’s recommended/default profile separately. Only the first two profiles support head-to-head claims.</li>
+    <li><strong>Correctness:</strong> Normalize findings to rule category, file, and span; require the expected common-rule findings before admitting a tool and profile to timing.</li>
+    <li><strong>Timing:</strong> Use <a href="https://github.com/sharkdp/hyperfine">hyperfine</a> with at least 20 measured runs. Measure cold-process agent invocations without warmups separately from warm-cache throughput runs with five warmups; randomize competitor order and export JSON evidence.</li>
+    <li><strong>Scaling:</strong> Derive property-preserving multi-file sets from the three primary fixtures, then measure this project at 1, 2, 4, 8, and automatic worker counts. Require at least 70% parallel efficiency from one to eight workers on the derived large set.</li>
+    <li><strong>Microarchitecture:</strong> Record cycles per byte, instructions per byte, branch misses, L1 data-cache misses, and last-level-cache misses when the platform exposes them. Treat these as diagnostic trends rather than portable absolute gates.</li>
+    <li><strong>Release gate:</strong> Require no slower median latency than the fastest qualifying competitor on the small clean artifact, ≥1.25× its speed on the mixed repair artifact, ≥1.5× its throughput on the large generated artifact, and ≤256 MiB peak resident memory. If any gate fails, block the “faster for agents” claim and optimize or revisit Approach C.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 760 620" role="img" aria-labelledby="bench-title bench-desc">
+      <title id="bench-title">Benchmark proof and release gate</title>
+      <desc id="bench-desc">Pinned tools and three agent-oriented HTML fixtures pass a correctness decision before timing; only results that pass all fixture-specific gates ship the performance claim.</desc>
+      <defs>
+        <marker id="bench-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5f6368"/></marker>
+        <marker id="bench-arrow-blue" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#1a73e8"/></marker>
+      </defs>
+      <rect width="760" height="620" fill="#ffffff"/>
+
+      <line x1="380" y1="80" x2="380" y2="104" stroke="#5f6368" stroke-width="1.2" marker-end="url(#bench-arrow)"/>
+      <line x1="380" y1="176" x2="380" y2="192" stroke="#5f6368" stroke-width="1.2" marker-end="url(#bench-arrow)"/>
+      <line x1="300" y1="232" x2="208" y2="232" stroke="#5f6368" stroke-width="1.2" marker-end="url(#bench-arrow)"/>
+      <line x1="380" y1="272" x2="380" y2="296" stroke="#1a73e8" stroke-width="1.2" marker-end="url(#bench-arrow-blue)"/>
+      <line x1="380" y1="368" x2="380" y2="376" stroke="#5f6368" stroke-width="1.2" marker-end="url(#bench-arrow)"/>
+      <line x1="460" y1="416" x2="552" y2="416" stroke="#1a73e8" stroke-width="1.2" marker-end="url(#bench-arrow-blue)"/>
+      <line x1="380" y1="456" x2="380" y2="480" stroke="#5f6368" stroke-width="1.2" marker-end="url(#bench-arrow)"/>
+
+      <rect x="224" y="208" width="48" height="12" rx="4" fill="#ffffff"/>
+      <text x="248" y="216" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">NO</text>
+      <rect x="392" y="276" width="32" height="12" rx="4" fill="#ffffff"/>
+      <text x="408" y="284" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">YES</text>
+      <rect x="484" y="392" width="32" height="12" rx="4" fill="#ffffff"/>
+      <text x="500" y="400" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">YES</text>
+      <rect x="392" y="460" width="32" height="12" rx="4" fill="#ffffff"/>
+      <text x="408" y="468" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">NO</text>
+
+      <rect x="240" y="24" width="280" height="56" rx="28" fill="#f8f9fa" stroke="#5f6368"/>
+      <text x="380" y="48" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Pinned competitors + shared corpora</text>
+      <text x="380" y="68" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">versions · commands · rule profiles</text>
+
+      <rect x="240" y="104" width="280" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+      <text x="380" y="136" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Normalize and verify findings</text>
+      <text x="380" y="156" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">same category · file · span</text>
+
+      <polygon points="380,192 460,232 380,272 300,232" fill="#ffffff" stroke="#202124" stroke-width="1.2"/>
+      <text x="380" y="228" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Equivalent?</text>
+      <text x="380" y="244" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">common profile</text>
+
+      <rect x="40" y="200" width="160" height="64" rx="8" fill="#f8f9fa" stroke="#5f6368" stroke-dasharray="4,4"/>
+      <text x="120" y="228" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Exclude comparison</text>
+      <text x="120" y="248" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">document mismatch</text>
+
+      <rect x="240" y="296" width="280" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+      <text x="380" y="328" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Measure end-to-end execution</text>
+      <text x="380" y="348" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">5 warmups · ≥20 runs · JSON evidence</text>
+
+      <polygon points="380,376 460,416 380,456 300,416" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+      <text x="380" y="412" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">All speed gates pass?</text>
+      <text x="380" y="428" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">3 agent fixtures</text>
+
+      <rect x="560" y="384" width="160" height="64" rx="28" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+      <text x="640" y="412" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Ship “faster” claim</text>
+      <text x="640" y="432" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">publish evidence</text>
+
+      <rect x="240" y="480" width="280" height="64" rx="8" fill="#f8f9fa" stroke="#5f6368"/>
+      <text x="380" y="508" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Block claim and optimize</text>
+      <text x="380" y="528" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">profile hot path · reconsider C</text>
+
+      <line x1="32" y1="572" x2="728" y2="572" stroke="#dadce0"/>
+      <text x="32" y="592" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">LEGEND</text>
+      <rect x="136" y="584" width="12" height="12" rx="4" fill="#e8f0fe" stroke="#1a73e8"/>
+      <text x="156" y="594" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">release-critical path</text>
+      <rect x="288" y="584" width="12" height="12" rx="4" fill="#f8f9fa" stroke="#5f6368"/>
+      <text x="308" y="594" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">blocked or excluded</text>
+    </svg>
+    <figcaption><strong>Figure 2.</strong> Correctness qualification precedes timing, and “faster for agents” ships only after all three fixture gates pass.</figcaption>
+  </figure>
+
+  <h3 id="agent-benchmark-files">Three-file agent artifact benchmark</h3>
+  <p>The primary benchmark uses three deterministic HTML files with deliberately different properties. Report every result separately; do not collapse them into one blended score that can hide slow startup, expensive error recovery, or weak sustained throughput.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Fixture</th>
+        <th>Controlled properties</th>
+        <th>What it reveals</th>
+        <th>Competitive gate</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>agent-clean-small.html</code><br><span class="badge lead">EDIT–VERIFY</span></td>
+        <td>16 KiB ±1%; complete document; shallow semantic layout; inline CSS, a small script, and inline SVG; 100–200 elements; zero expected findings.</td>
+        <td>Cold binary startup, config lookup, file open versus <code>stdin</code>, parser setup, serial-fast-path overhead, and success-result serialization.</td>
+        <td>Median no slower than the fastest qualifying CLI; target P95 ≤25 ms on the reference machine.</td>
+      </tr>
+      <tr>
+        <td><code>agent-mixed-repair.html</code><br><span class="badge">DIAGNOSTICS</span></td>
+        <td>512 KiB ±1%; forms, tables, SVG, comments, entities, <code>script</code>/<code>style</code> raw text, varied nesting and quoting; exactly 256 seeded common-profile findings.</td>
+        <td>Branch prediction, malformed recovery, line/column mapping, bounded diagnostic collection, deterministic ordering, and compact agent-facing output.</td>
+        <td>Exact normalized finding manifest and at least 1.25× the fastest qualifying competitor’s median end-to-end speed.</td>
+      </tr>
+      <tr>
+        <td><code>agent-report-large.html</code><br><span class="badge">THROUGHPUT</span></td>
+        <td>16 MiB ±1%; valid machine-generated report with repeated tables, cards, links, unique IDs, long text runs, and predictable tag distribution; zero expected findings.</td>
+        <td>Sustained bytes per second, working-set locality, allocator traffic, cache misses, and the cost of scanning raw text larger than typical private caches.</td>
+        <td>At least 1.5× the fastest qualifying competitor’s median throughput with ≤256 MiB peak resident memory.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>Cross-tool controls</h4>
+  <ul>
+    <li>Generate each file from a checked-in seed and record its SHA-256 hash, byte count, element count, maximum depth, raw-text byte share, attribute distribution, and expected findings.</li>
+    <li>Use the intersection of semantically equivalent rules for competitive timing. Run each tool’s recommended profile separately and label it as a coverage comparison, not a speed ranking.</li>
+    <li>Measure direct file paths for every tool. Add a separate <code>stdin</code> result only where the tool supports it; never compare one tool’s <code>stdin</code> path with another tool’s filesystem path as the headline result.</li>
+    <li>Include real diagnostic emission in the mixed-repair timing. Validate normalized output outside the timed region, and disable diagnostic caps so every tool processes all 256 expected findings.</li>
+    <li>Measure the Nu checker’s cold CLI and prewarmed service as distinct products. Keep service startup outside warm-service timing and label the result accordingly.</li>
+    <li>Randomize tool order, keep the filesystem page-cache policy identical, document CPU frequency and power settings, and publish raw hyperfine JSON rather than only relative bars.</li>
+  </ul>
+
+  <h4>Derived multicore sets</h4>
+  <p>Three single files measure the dominant agent loop but cannot prove multithreaded scheduling. Generate path-distinct, seed-varied derivatives with the same structural properties: many small clean artifacts to stress dispatch, medium repair artifacts to stress worker-local diagnostics, and enough large reports to reach at least 512 MiB total input. Measure those sets separately at fixed worker counts; do not mix their scaling numbers into the three single-file headline.</p>
+
+  <h3 id="microarchitecture">Cache affinity, cache lines, and branch prediction</h3>
+  <p>The hot path must minimize cross-core ownership changes and unpredictable control flow. These choices remain benchmark-driven because cache geometry, simultaneous multithreading, operating-system scheduling, and branch predictors vary by processor.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Concern</th>
+        <th>Design response</th>
+        <th>How to verify it</th>
+        <th>Failure signal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Worker cache affinity</strong></td>
+        <td>Give each worker ownership of parser state, rule state, scratch buffers, line indexes, and its diagnostics vector. Batch very small files into size-aware tasks so warmed state survives across useful work. Do not enable operating-system-specific thread pinning by default.</td>
+        <td>Compare unpinned and pinned benchmark runs on fixed physical cores; record CPU migrations, cycles per byte, and scaling efficiency.</td>
+        <td>Throughput falls as workers increase while CPU utilization stays high, or migrations correlate with higher last-level-cache misses.</td>
+      </tr>
+      <tr>
+        <td><strong>Cache-line ownership</strong></td>
+        <td>Keep the hot path free of shared writable counters and queues. Accumulate counts and diagnostics per worker, then reduce after parsing. Separate frequently written worker fields from shared read-only configuration; add explicit padding only after a false-sharing benchmark proves it helps on supported targets.</td>
+        <td>Run a counter-only stress fixture and compare one, two, four, and eight workers while observing cache-coherency and last-level-cache events.</td>
+        <td>Two workers perform worse than one, or tiny per-file writes produce disproportionate cache-coherency traffic.</td>
+      </tr>
+      <tr>
+        <td><strong>Working-set locality</strong></td>
+        <td>Keep events compact and borrowed, store byte spans instead of copied strings, reuse capacity, and split hot document facts from cold diagnostic metadata. Avoid a pointer-rich general DOM in the default path.</td>
+        <td>Measure L1 data-cache and last-level-cache misses per mebibyte across representative file sizes and rule profiles.</td>
+        <td>Misses grow faster than input size, or enabling an unrelated rule expands the hot working set for every token.</td>
+      </tr>
+      <tr>
+        <td><strong>Branch prediction</strong></td>
+        <td>Bucket enabled rules by event kind, bypass disabled rule families before token iteration, keep common tokenizer states on the straight path, and move malformed-input recovery plus diagnostic formatting into cold functions. Avoid speculative manual branch hints without profile evidence.</td>
+        <td>Record branch misses per million tokens for regular, mixed, and malformed corpora; compare rule dispatch strategies in microbenchmarks.</td>
+        <td>Regular machine-generated HTML has the same branch-miss rate as malformed recovery input, or each additional disabled rule increases cycles per byte.</td>
+      </tr>
+      <tr>
+        <td><strong>Instruction-cache pressure</strong></td>
+        <td>Keep the fused tokenizer/rule loop small, use shared helpers for cold reporting paths, and prevent generated static dispatch from cloning a large hot loop for every rule combination.</td>
+        <td>Compare binary text size, instruction-cache misses, and cycles per byte as the enabled rule set grows.</td>
+        <td>A larger rule registry slows syntax-only runs even when the added rules are disabled.</td>
+      </tr>
+      <tr>
+        <td><strong>Multi-socket and NUMA</strong></td>
+        <td>Make no first-release non-uniform memory access (NUMA) promise. On multi-socket machines, test one socket before cross-socket scaling; consider per-node pools and corpus sharding only after measurements show remote-memory traffic.</td>
+        <td>Record socket topology, worker placement, and per-node memory behavior in dedicated large-host benchmarks.</td>
+        <td>Scaling improves within one socket and reverses when workers span sockets.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <p><span class="label">Optimization rule:</span> Prefer ownership and layout changes that remove shared writes or copied data. Add affinity controls, cache-line padding, profile-guided optimization, or architecture-specific code only when a reproducible benchmark identifies that mechanism as the bottleneck.</p>
+  </div>
+
+  <section class="approach">
+    <h2 id="approach-a">Approach A: Build a DOM per worker</h2>
+    <p class="tagline">Favor rule expressiveness and browser-like tree semantics with conventional file-level parallelism.</p>
+
+    <p>The dispatcher assigns each file to a Rayon worker. The worker parses a complete DOM with html5ever, then runs rule visitors over the tree. Rules can inspect ancestors, siblings, implied elements, and document-wide indexes without inventing a second structural model. Figure 3 traces this five-stage path.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 260" role="img" aria-labelledby="dom-title dom-desc">
+        <title id="dom-title">DOM-per-worker architecture</title>
+        <desc id="dom-desc">Ignored-aware discovery feeds a Rayon pool; each worker builds a DOM, runs tree rules, and sends findings to a deterministic collector.</desc>
+        <defs>
+          <marker id="dom-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5f6368"/></marker>
+        </defs>
+        <rect width="760" height="260" fill="#ffffff"/>
+
+        <line x1="136" y1="116" x2="168" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#dom-arrow)"/>
+        <line x1="288" y1="116" x2="320" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#dom-arrow)"/>
+        <line x1="440" y1="116" x2="472" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#dom-arrow)"/>
+        <line x1="592" y1="116" x2="624" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#dom-arrow)"/>
+
+        <rect x="24" y="80" width="112" height="72" rx="8" fill="#f8f9fa" stroke="#5f6368"/>
+        <text x="80" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">HTML inputs</text>
+        <text x="80" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">paths · stdin</text>
+
+        <rect x="176" y="80" width="112" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="232" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Discovery</text>
+        <text x="232" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">ignore::WalkBuilder</text>
+
+        <rect x="328" y="80" width="112" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="384" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Rayon pool</text>
+        <text x="384" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">one task / file</text>
+
+        <rect x="480" y="80" width="112" height="72" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+        <text x="536" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">DOM worker</text>
+        <text x="536" y="128" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">parse + visitors</text>
+
+        <rect x="632" y="80" width="112" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="688" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Collector</text>
+        <text x="688" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">sort + render</text>
+
+        <line x1="32" y1="208" x2="728" y2="208" stroke="#dadce0"/>
+        <text x="32" y="228" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">LEGEND</text>
+        <rect x="136" y="220" width="12" height="12" rx="4" fill="#e8f0fe" stroke="#1a73e8"/>
+        <text x="156" y="230" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">primary cost center</text>
+        <rect x="292" y="220" width="12" height="12" rx="4" fill="#ffffff" stroke="#202124"/>
+        <text x="312" y="230" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">linter component</text>
+      </svg>
+      <figcaption><strong>Figure 3.</strong> Approach A parallelizes files and gives every rule a complete tree.</figcaption>
+    </figure>
+
+    <h3 id="approach-a-changes">What changes</h3>
+    <ul>
+      <li><strong>Components:</strong> Create a CLI, configuration loader, ignore-aware discovery layer, Rayon dispatcher, html5ever tree adapter, rule registry, DOM visitor API, diagnostic model, renderers, and benchmark harness.</li>
+      <li><strong>Data model:</strong> Keep one owned DOM plus per-document indexes for IDs and rule metadata in each active worker.</li>
+      <li><strong>Interfaces:</strong> Rules implement document and node callbacks such as <code>check_document</code> and <code>check_element</code>; a typed <code>RuleContext</code> collects findings.</li>
+      <li><strong>Dependencies:</strong> Use <code>html5ever</code> with a DOM implementation, <code>rayon</code>, <code>ignore</code>, <code>clap</code>, <code>serde</code>, a TOML parser, and terminal diagnostic support.</li>
+    </ul>
+
+    <h3 id="approach-a-cost">Cost and consequences</h3>
+    <p>Budget about 3–4 engineering weeks, 3,500–4,500 production lines across 16–20 source files, and 20–30 focused tests plus conformance fixtures. The design makes new structural rules inexpensive, but it commits every file to full-tree allocation before the first result. Pointer-rich nodes enlarge the worker working set and add less-predictable traversals after parsing. Later streaming optimization requires either a second rule API or a rewrite of rules that depend on tree traversal.</p>
+  </section>
+
+  <section class="approach">
+    <h2 id="approach-b">Approach B: Fuse tokenization and rules</h2>
+    <p class="tagline">Stream standards-aware tokens through allocation-conscious rules while parallelizing independent files.</p>
+
+    <p>A direct path or <code>stdin</code> invocation parses one small artifact on the caller thread, avoiding filesystem discovery and worker-pool scheduling. Larger input sets feed html5gum's span-aware tokenizer to bounded workers through an adaptive dispatcher. Rules consume start tags, end tags, text runs, comments, doctypes, and parse errors while each execution context maintains compact facts: the open-element stack, head metadata, ID definitions and references, and source line indexes. Worker-owned scratch buffers and diagnostics preserve cache locality, while event-kind rule buckets keep disabled or irrelevant rules out of the branch-heavy token loop. The linter never builds a general-purpose DOM. Figure 4 shows the parallel path.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 260" role="img" aria-labelledby="stream-title stream-desc">
+        <title id="stream-title">Streaming rule-engine architecture</title>
+        <desc id="stream-desc">Direct inputs use a serial fast path while larger sets use work stealing; each execution context fuses HTML tokenization with rule evaluation and returns deterministic findings.</desc>
+        <defs>
+          <marker id="stream-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5f6368"/></marker>
+        </defs>
+        <rect width="760" height="260" fill="#ffffff"/>
+
+        <line x1="136" y1="116" x2="168" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#stream-arrow)"/>
+        <line x1="288" y1="116" x2="320" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#stream-arrow)"/>
+        <line x1="440" y1="116" x2="472" y2="116" stroke="#1a73e8" stroke-width="1.2" marker-end="url(#stream-arrow)"/>
+        <line x1="592" y1="116" x2="624" y2="116" stroke="#5f6368" stroke-width="1.2" marker-end="url(#stream-arrow)"/>
+
+        <rect x="24" y="80" width="112" height="72" rx="8" fill="#f8f9fa" stroke="#5f6368"/>
+        <text x="80" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">HTML inputs</text>
+        <text x="80" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">paths · stdin</text>
+
+        <rect x="176" y="80" width="112" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="232" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Discovery</text>
+        <text x="232" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">parallel walk</text>
+
+        <rect x="328" y="80" width="112" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="384" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Adaptive dispatch</text>
+        <text x="384" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">serial · work stealing</text>
+
+        <rect x="480" y="80" width="112" height="72" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+        <text x="536" y="104" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Stream worker</text>
+        <text x="536" y="124" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">tokens + rules</text>
+        <text x="536" y="140" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">compact facts</text>
+
+        <rect x="632" y="80" width="112" height="72" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="688" y="108" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Collector</text>
+        <text x="688" y="128" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">stable findings</text>
+
+        <line x1="32" y1="208" x2="728" y2="208" stroke="#dadce0"/>
+        <text x="32" y="228" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">LEGEND</text>
+        <rect x="136" y="220" width="12" height="12" rx="4" fill="#e8f0fe" stroke="#1a73e8"/>
+        <text x="156" y="230" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">fused hot path</text>
+        <rect x="268" y="220" width="12" height="12" rx="4" fill="#ffffff" stroke="#202124"/>
+        <text x="288" y="230" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">linter component</text>
+      </svg>
+      <figcaption><strong>Figure 4.</strong> Approach B performs one standards-aware pass and retains only rule-relevant facts.</figcaption>
+    </figure>
+
+    <h3 id="approach-b-changes">What changes</h3>
+    <ul>
+      <li><strong>Components:</strong> Create the same CLI, configuration, discovery, scheduling, diagnostics, renderers, and benchmark layers as Approach A, plus direct-path and <code>stdin</code> adapters, an adaptive serial/parallel threshold, a streaming event adapter, compact document facts, and rule phase declarations.</li>
+      <li><strong>Data model:</strong> Keep borrowed or interned token data for the duration of a callback, a small open-element stack, line-start offsets, selected document indexes, and a file-local diagnostics vector. Split frequently accessed parsing facts from cold messages and renderer metadata.</li>
+      <li><strong>Interfaces:</strong> Rules implement <code>on_event(&amp;Event, &amp;mut RuleContext)</code> and <code>finish(&amp;DocumentFacts, &amp;mut RuleContext)</code>. The registry constructs fresh rule state for every file and shares immutable configuration across workers.</li>
+      <li><strong>Dependencies:</strong> Use <code>html5gum</code> span-aware tokenizer APIs, <code>rayon</code>, <code>ignore</code>, and <code>serde</code>. Keep argument parsing small and emit JSON directly; avoid a DOM crate, terminal renderer, and configuration parser in the default path.</li>
+    </ul>
+
+    <h3 id="approach-b-cost">Cost and consequences</h3>
+    <p>Budget about 5–7 engineering weeks, 5,000–7,000 production lines across 22–28 source files, and 35–50 focused tests plus tokenizer fixtures, property tests, cache-line stress tests, dispatch microbenchmarks, and corpus benchmarks. The rule API stays close to the hot path and keeps memory bounded. Rules that need arbitrary sibling traversal, browser-inserted nodes, or repeated subtree queries require a targeted fact index or an explicitly slower tree phase; the project cannot pretend those operations are free.</p>
+  </section>
+
+  <section class="approach">
+    <h2 id="approach-c">Approach C: Add a SIMD fast path with parser fallback</h2>
+    <p class="tagline">Optimize machine-generated, regular HTML with a custom scanner and preserve a standards-aware escape hatch.</p>
+
+    <p>A custom byte scanner uses <code>memchr</code>-style vectorized searches to find candidate tag and attribute boundaries over buffered or memory-mapped input. Fast-path rules execute directly on byte spans. Documents containing raw-text states, malformed constructs, unusual encodings, or other unsupported patterns route to html5ever so the CLI returns a result instead of failing open. Figure 5 makes the two parsing paths explicit.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="simd-title simd-desc">
+        <title id="simd-title">SIMD fast path with standards fallback</title>
+        <desc id="simd-desc">Files pass through a vectorized boundary scanner; regular documents use fast byte-span rules while complex documents fall back to html5ever before findings merge.</desc>
+        <defs>
+          <marker id="simd-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#5f6368"/></marker>
+          <marker id="simd-arrow-blue" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#1a73e8"/></marker>
+        </defs>
+        <rect width="760" height="300" fill="#ffffff"/>
+
+        <line x1="136" y1="128" x2="168" y2="128" stroke="#5f6368" stroke-width="1.2" marker-end="url(#simd-arrow)"/>
+        <line x1="288" y1="128" x2="320" y2="128" stroke="#5f6368" stroke-width="1.2" marker-end="url(#simd-arrow)"/>
+        <path d="M432,112 H452 Q460,112 460,104 V88 Q460,80 468,80 H480" fill="none" stroke="#1a73e8" stroke-width="1.2" marker-end="url(#simd-arrow-blue)"/>
+        <path d="M432,144 H452 Q460,144 460,152 V184 Q460,192 468,192 H480" fill="none" stroke="#5f6368" stroke-width="1" stroke-dasharray="4,4" marker-end="url(#simd-arrow)"/>
+        <path d="M592,80 H604 Q612,80 612,88 V120 Q612,128 620,128 H632" fill="none" stroke="#1a73e8" stroke-width="1.2" marker-end="url(#simd-arrow-blue)"/>
+        <path d="M592,192 H604 Q612,192 612,184 V152 Q612,144 620,144 H632" fill="none" stroke="#5f6368" stroke-width="1" stroke-dasharray="4,4" marker-end="url(#simd-arrow)"/>
+
+        <rect x="428" y="84" width="24" height="12" rx="4" fill="#ffffff"/>
+        <text x="444" y="92" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">FAST</text>
+        <rect x="396" y="164" width="52" height="12" rx="4" fill="#ffffff"/>
+        <text x="424" y="172" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">FALLBACK</text>
+
+        <rect x="24" y="96" width="112" height="64" rx="8" fill="#f8f9fa" stroke="#5f6368"/>
+        <text x="80" y="124" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">HTML inputs</text>
+        <text x="80" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">worker-owned</text>
+
+        <rect x="176" y="96" width="112" height="64" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="232" y="124" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Input bytes</text>
+        <text x="232" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">read · optional mmap</text>
+
+        <rect x="320" y="96" width="112" height="64" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+        <text x="376" y="124" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">SIMD scanner</text>
+        <text x="376" y="144" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">boundary classify</text>
+
+        <rect x="480" y="48" width="112" height="64" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.2"/>
+        <text x="536" y="76" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Fast rules</text>
+        <text x="536" y="96" fill="#1a73e8" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">borrowed spans</text>
+
+        <rect x="480" y="160" width="112" height="64" rx="8" fill="#ffffff" stroke="#202124" stroke-dasharray="4,4"/>
+        <text x="536" y="188" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">html5ever</text>
+        <text x="536" y="208" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">complex documents</text>
+
+        <rect x="632" y="96" width="112" height="64" rx="8" fill="#ffffff" stroke="#202124"/>
+        <text x="688" y="124" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Collector</text>
+        <text x="688" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="middle">merge + render</text>
+
+        <line x1="32" y1="256" x2="728" y2="256" stroke="#dadce0"/>
+        <text x="32" y="276" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">LEGEND</text>
+        <line x1="136" y1="272" x2="160" y2="272" stroke="#1a73e8" stroke-width="1.2"/>
+        <text x="168" y="276" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">optimized path</text>
+        <line x1="276" y1="272" x2="300" y2="272" stroke="#5f6368" stroke-dasharray="4,4"/>
+        <text x="308" y="276" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">standards fallback</text>
+      </svg>
+      <figcaption><strong>Figure 5.</strong> Approach C buys higher best-case throughput with two parsing paths and explicit fallback semantics.</figcaption>
+    </figure>
+
+    <h3 id="approach-c-changes">What changes</h3>
+    <ul>
+      <li><strong>Components:</strong> Create the shared CLI and orchestration layers plus a custom byte scanner, fast-path eligibility detector, borrowed-span rule API, fallback adapter, differential test harness, and fallback telemetry.</li>
+      <li><strong>Data model:</strong> Keep byte spans into worker-owned input, compact scanner state, fast-path document facts, and a common diagnostic representation shared with the fallback parser.</li>
+      <li><strong>Interfaces:</strong> Fast rules consume normalized byte-span events; fallback rules consume equivalent events translated from html5ever. Every rule declares whether both paths preserve its semantics.</li>
+      <li><strong>Dependencies:</strong> Add <code>memchr</code> and optionally <code>memmap2</code> to the shared dependencies, while retaining html5ever as the compatibility path.</li>
+    </ul>
+
+    <h3 id="approach-c-cost">Cost and consequences</h3>
+    <p>Budget about 8–12 engineering weeks, 8,000–12,000 production lines across 30–40 source files, and 70–100 tests including fuzzing and differential comparison against html5ever. The vectorized delimiter scan improves the regular fast path, but eligibility checks and fallback transitions add branches and instruction-cache pressure. The design creates a credible path beyond parser-bound throughput for regular generated HTML. It also commits the project to maintaining two observable parsing paths, documenting fallback coverage, and auditing any memory-mapped input because concurrent file mutation can invalidate safety assumptions.</p>
+  </section>
+
+  <h2 id="tradeoffs">Tradeoffs</h2>
+  <p>The estimates compare a first production-ready release with the same CLI, configuration, diagnostics, baseline rule pack, and benchmark corpus. Throughput uses the proposed one-gibibyte warm-cache corpus on eight physical cores; implementation must replace projections with measurements. Figure 6 plots the same effort and throughput estimates after the table.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Criterion</th>
+        <th>A: DOM workers</th>
+        <th>B: Streaming rules</th>
+        <th>C: SIMD hybrid</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Implementation effort</td><td>3–4 weeks; 3.5–4.5k lines</td><td>5–7 weeks; 5–7k lines</td><td>8–12 weeks; 8–12k lines</td></tr>
+      <tr><td>Core source surface</td><td>16–20 files</td><td>22–28 files</td><td>30–40 files</td></tr>
+      <tr><td>Test surface</td><td>20–30 focused tests + fixtures</td><td>35–50 tests + properties + benchmarks</td><td>70–100 tests + fuzzing + differential suite</td></tr>
+      <tr><td>Projected full-rule throughput</td><td>150–300 MB/s</td><td>400–800 MB/s</td><td>0.8–1.5 GB/s on fast-path corpus</td></tr>
+      <tr><td>One-artifact agent latency</td><td>Full parse and tree allocation before rules run</td><td>Caller-thread stream path avoids pool startup and full-tree allocation</td><td>Scanner eligibility and fallback setup can dominate small files</td></tr>
+      <tr><td>Memory shape</td><td>Input plus full DOM per active file; commonly several times source size</td><td>Input plus compact facts and diagnostics; target 2–8 MiB scratch per worker</td><td>Mapped or buffered input plus ≤2 MiB scratch per worker; fallback may allocate more</td></tr>
+      <tr><td>Microarchitectural fit</td><td>Largest working set; pointer chasing raises cache and branch cost</td><td>Small worker-owned state; strongest locality and simplest predictable hot path</td><td>Best regular-input scan; dual paths add branch and instruction-cache pressure</td></tr>
+      <tr><td>HTML semantics</td><td>Tree-builder behavior supports implied nodes and arbitrary traversal</td><td>Tokenizer semantics plus explicitly modeled document facts</td><td>Declared fast-path subset plus html5ever fallback</td></tr>
+      <tr><td>Rule authoring</td><td>Direct tree visitors; lowest barrier for structural rules</td><td>Event callbacks and finish phase; shared indexes require design review</td><td>Borrowed byte events plus cross-path equivalence contract</td></tr>
+      <tr><td>Determinism</td><td>File-local findings, final stable sort</td><td>File-local findings, final stable sort</td><td>File-local findings, final stable sort plus path-equivalence tests</td></tr>
+      <tr><td>Operational complexity</td><td>One parser path and one rule model</td><td>One parser path and two rule phases</td><td>Two parser paths, fallback telemetry, and differential releases</td></tr>
+      <tr><td>New dependency roles</td><td>DOM adapter in addition to shared CLI stack</td><td>Tokenizer API; no default DOM crate</td><td><code>memchr</code>, optional <code>memmap2</code>, and tokenizer fallback</td></tr>
+      <tr><td>Reversibility</td><td>Can prototype quickly; streaming migration rewrites tree rules</td><td>Can add an opt-in DOM slow lane without changing the hot path</td><td>Custom scanner becomes a long-lived compatibility surface</td></tr>
+      <tr><td>Maintenance burden</td><td>Parser upgrades plus rule pack</td><td>Parser adapter, compact facts, and rule pack</td><td>Scanner, eligibility model, fallback adapter, and rule pack</td></tr>
+    </tbody>
+  </table>
+
+  <figure>
+    <svg viewBox="0 0 760 400" role="img" aria-labelledby="quad-title quad-desc">
+      <title id="quad-title">Effort and projected throughput comparison</title>
+      <desc id="quad-desc">A quadrant positions DOM workers at lower effort and lower projected throughput, streaming rules at moderate effort and high throughput, and the SIMD hybrid at high effort and the highest best-case throughput.</desc>
+      <defs>
+        <marker id="quad-axis" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#202124"/></marker>
+      </defs>
+      <rect width="760" height="400" fill="#ffffff"/>
+
+      <line x1="96" y1="320" x2="672" y2="320" stroke="#202124" stroke-width="1.2" marker-end="url(#quad-axis)"/>
+      <line x1="96" y1="320" x2="96" y2="48" stroke="#202124" stroke-width="1.2" marker-end="url(#quad-axis)"/>
+      <line x1="384" y1="64" x2="384" y2="320" stroke="#dadce0" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="96" y1="184" x2="656" y2="184" stroke="#dadce0" stroke-width="1" stroke-dasharray="4,4"/>
+
+      <text x="684" y="324" fill="#202124" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">EFFORT</text>
+      <text x="96" y="32" fill="#202124" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2" text-anchor="middle">THROUGHPUT</text>
+      <text x="108" y="340" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8">LOWER</text>
+      <text x="620" y="340" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8">HIGHER</text>
+      <text x="68" y="308" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="end">LOWER</text>
+      <text x="68" y="64" fill="#80868b" font-family="'Roboto Mono', monospace" font-size="8" text-anchor="end">HIGHER</text>
+
+      <circle cx="256" cy="232" r="8" fill="#ffffff" stroke="#5f6368" stroke-width="1.2"/>
+      <text x="272" y="224" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600">A · DOM workers</text>
+      <text x="272" y="244" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8">3–4 weeks · 150–300 MB/s</text>
+
+      <circle cx="424" cy="132" r="8" fill="#1a73e8" stroke="#1a73e8" stroke-width="1.2"/>
+      <text x="440" y="124" fill="#1a73e8" font-family="Roboto, sans-serif" font-size="12" font-weight="600">B · Streaming rules</text>
+      <text x="440" y="144" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8">5–7 weeks · 400–800 MB/s</text>
+
+      <circle cx="568" cy="76" r="8" fill="#ffffff" stroke="#5f6368" stroke-width="1.2"/>
+      <text x="584" y="68" fill="#202124" font-family="Roboto, sans-serif" font-size="12" font-weight="600">C · SIMD hybrid</text>
+      <text x="584" y="88" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8">8–12 weeks · best case</text>
+
+      <line x1="32" y1="368" x2="728" y2="368" stroke="#dadce0"/>
+      <text x="32" y="388" fill="#5f6368" font-family="'Roboto Mono', monospace" font-size="8" letter-spacing="1.2">LEGEND</text>
+      <circle cx="144" cy="384" r="4" fill="#1a73e8"/>
+      <text x="156" y="388" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">recommended balance</text>
+      <circle cx="288" cy="384" r="4" fill="#ffffff" stroke="#5f6368"/>
+      <text x="300" y="388" fill="#5f6368" font-family="Roboto, sans-serif" font-size="8">alternative</text>
+    </svg>
+    <figcaption><strong>Figure 6.</strong> Approach B occupies the best effort-to-throughput position without introducing a custom HTML parser. Values are projections pending benchmarks.</figcaption>
+  </figure>
+
+  <h2 id="recommendation">Recommendation</h2>
+  <div class="callout key">
+    <p><span class="label">Approved:</span> Build Approach B with html5gum's span-aware stream, compact JSON-only output, and the three-file competitor benchmark.</p>
+  </div>
+
+  <p>Five factors decide the recommendation. First, a native caller-thread stream path minimizes the dominant one-artifact agent loop. Second, file-level work stealing remains available when an agent or CI supplies enough independent work. Third, html5gum's exact source spans and callback/custom emitters let the implementation fuse parsing and rule evaluation without reconstructing diagnostic locations. Fourth, compact worker-owned facts avoid shared writable cache lines and keep the active working set small. Fifth, event-kind rule buckets and cold recovery paths reduce unpredictable branches without introducing a second parser.</p>
+  <p>Implement the architecture in benchmark-gated slices: add direct path/<code>stdin</code> execution and deterministic compact JSON diagnostics, the tokenizer adapter and common lexical rule profile, adaptive dispatch, the three deterministic agent fixtures, competitor adapters, raw benchmark evidence, and then performance hardening driven by measured results.</p>
+
+  <h3 id="counterargument">The case against</h3>
+  <p>Approach B makes complex tree-oriented rules harder to express than Approach A. A rule that asks repeated arbitrary ancestor, sibling, or implied-node questions can turn compact facts into a shadow DOM. That objection does not win for the proposed first release because the product has not yet committed to a DOM-heavy compatibility rule set, and the architecture can add a clearly marked opt-in tree slow lane after benchmarks show its cost.</p>
+
+  <h3 id="what-would-change-this">What would change this</h3>
+  <p>Choose Approach A if the selected rule catalog shows that more than 20% of enabled rules require arbitrary tree navigation or browser-inserted nodes. Move from Approach B to Approach C if the Phase 0 prototype cannot reach a 1.5× lead over the fastest qualifying competitor after profiling, at least 90% of production input qualifies for the fast path, and the team accepts an additional 8–12 weeks of parser and fuzzing work.</p>
+
+  <h2 id="open-questions">Open questions</h2>
+  <ol>
+    <li>Which rule contract defines version one: a new curated set, compatibility with an existing linter, accessibility checks, HTML conformance checks, or a named combination?</li>
+    <li><s>Which outputs are mandatory at launch?</s> Resolved: compact JSON only.</li>
+    <li>What corpus and machine define “blazingly fast,” including file count, total bytes, median file size, largest file, storage type, core count, and warm-versus-cold cache?</li>
+    <li>Which platforms and minimum Rust version must release binaries support?</li>
+    <li>Should version one reject template syntax, ignore template regions, or support named dialect adapters?</li>
+    <li>Does CI require fail-fast behavior, a maximum diagnostics count, warning thresholds, and stable exit codes beyond success, findings, and operational failure?</li>
+    <li>Should Biome, HTMLHint, HTML-Validate, Markuplint, and both Nu checker modes remain the mandatory competitor set, or do you need compatibility with another named tool?</li>
+    <li>Is a one-shot CLI with <code>stdin</code> sufficient for your agents, or should a later phase add a persistent JSON-lines server to amortize process startup across many artifact checks?</li>
+  </ol>
+
+  <div class="callout">
+    <p><span class="label">Implementation gate:</span> Approach B and JSON-only output are approved. The user explicitly waived the separate Markdown plan; implementation and benchmark evidence follow this design record.</p>
+  </div>
+
+</main>
+
+<nav id="toc" aria-label="On this page">
+  <div class="toc-title">On this page</div>
+  <ul></ul>
+</nav>
+</div>
+
+<script>
+  (function () {
+    var main = document.querySelector('main');
+    var list = document.querySelector('#toc ul');
+    var heads = main.querySelectorAll('h2[id], h3[id]');
+
+    heads.forEach(function (heading) {
+      var item = document.createElement('li');
+      item.className = 'lvl-' + heading.tagName[1];
+      var link = document.createElement('a');
+      link.href = '#' + heading.id;
+      link.textContent = heading.textContent;
+      item.appendChild(link);
+      list.appendChild(item);
+    });
+
+    if (!('IntersectionObserver' in window)) return;
+    var links = list.querySelectorAll('a');
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        links.forEach(function (link) {
+          link.classList.toggle('active', link.getAttribute('href') === '#' + entry.target.id);
+        });
+      });
+    }, { rootMargin: '0px 0px -75% 0px' });
+
+    heads.forEach(function (heading) { observer.observe(heading); });
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+{
+  "tools": [
+    {
+      "name": "html-lint",
+      "version": "0.1.0",
+      "command": ["target/release/html-lint", "--rules", "common", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    },
+    {
+      "name": "biome",
+      "version": "2.5.10",
+      "command": ["node_modules/.bin/biome", "lint", "--only=a11y/useAltText", "--reporter=json", "--max-diagnostics=none", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    },
+    {
+      "name": "htmlhint",
+      "version": "1.9.2",
+      "command": ["node_modules/.bin/htmlhint", "--config", "benchmarks/competitors/htmlhint.json", "--format", "unix", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    },
+    {
+      "name": "html-validate",
+      "version": "11.10.0",
+      "command": ["node_modules/.bin/html-validate", "--config", "benchmarks/competitors/html-validate.json", "--formatter=stylish", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    },
+    {
+      "name": "markuplint",
+      "version": "4.18.3",
+      "command": ["node_modules/.bin/markuplint", "--config", "benchmarks/competitors/markuplint.json", "--format", "Simple", "--problem-only", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0],
+      "max_benchmark_bytes": 1048576,
+      "exclusion_reason": "A single 16 MiB smoke process exceeded 210 seconds and was stopped."
+    },
+    {
+      "name": "nu-html-checker",
+      "version": "26.8.23 (9b5b796)",
+      "command": ["java", "-jar", "benchmarks/tools/vnu.jar", "--format", "json", "--stdout", "--errors-only", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "agent-clean-small",
+      "path": "benchmarks/fixtures/agent-clean-small.html",
+      "warmups": 0,
+      "runs": 30,
+      "expected_findings": 0
+    },
+    {
+      "name": "agent-mixed-repair",
+      "path": "benchmarks/fixtures/agent-mixed-repair.html",
+      "warmups": 5,
+      "runs": 20,
+      "expected_findings": 256
+    },
+    {
+      "name": "agent-report-large",
+      "path": "benchmarks/fixtures/agent-report-large.html",
+      "warmups": 5,
+      "runs": 20,
+      "expected_findings": 0
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-25",
+  "machine": {
+    "os": "macos",
+    "arch": "aarch64",
+    "available_parallelism": 8,
+    "rustc": "1.98.0"
+  },
+  "profile": {
+    "rule": "img-alt",
+    "expected_findings": [0, 256, 0],
+    "output": "json",
+    "process_model": "one-shot"
+  },
+  "headline": [
+    {
+      "fixture": "agent-clean-small",
+      "bytes": 16384,
+      "html_lint_median_ms": 3.450292,
+      "fastest_competitor": "biome 2.5.10",
+      "competitor_median_ms": 75.175084,
+      "speedup": 21.788035331502375,
+      "html_lint_p95_ms": 23.187959
+    },
+    {
+      "fixture": "agent-mixed-repair",
+      "bytes": 524288,
+      "html_lint_median_ms": 6.872125,
+      "fastest_competitor_in_full_matrix": "htmlhint 1.9.2",
+      "competitor_full_matrix_median_ms": 181.201916,
+      "conservative_cross_run_speedup": 26.36766880695564,
+      "biome_head_to_head_median_ms": 345.750042,
+      "biome_head_to_head_speedup": 50.31195474471143
+    },
+    {
+      "fixture": "agent-report-large",
+      "bytes": 16777216,
+      "html_lint_median_ms": 57.098583,
+      "fastest_competitor": "biome 2.5.10",
+      "competitor_median_ms": 88.515541,
+      "speedup": 1.5502230764640867,
+      "html_lint_throughput_mib_per_second": 280.217111517461
+    }
+  ],
+  "resource_check": {
+    "fixture": "agent-report-large",
+    "maximum_resident_set_bytes": 18956288,
+    "maximum_resident_set_mib": 18.078125,
+    "gate_mib": 256,
+    "passed": true
+  },
+  "gates": {
+    "faster_on_all_three_fixtures": true,
+    "small_p95_at_most_25_ms": true,
+    "large_speedup_at_least_1_5x": true,
+    "peak_rss_below_256_mib": true
+  },
+  "exclusions": [
+    {
+      "tool": "markuplint 4.18.3",
+      "fixture": "agent-report-large",
+      "reason": "A single 16 MiB smoke process exceeded 210 seconds and was stopped."
+    }
+  ],
+  "evidence": {
+    "full_matrix": "baseline-full.json",
+    "pre_lto_head_to_head": "optimized-thin-headline.json",
+    "final_head_to_head": "optimized-fat-headline.json"
+  }
+}

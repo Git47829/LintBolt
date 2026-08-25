@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "path": "agent-clean-small.html",
+      "bytes": 16384,
+      "sha256": "650edb8a013affbf8264cfd5a944fd7f538235552ba08b5378f181665cb7bcc2",
+      "properties": ["small", "clean", "startup-sensitive", "repeated-agent-cards"],
+      "expected_img_alt_findings": 0
+    },
+    {
+      "path": "agent-mixed-repair.html",
+      "bytes": 524288,
+      "sha256": "1f69939d94b20e996e6fd55161813a9099b589d18c8f6e89ce73e9581d1cfd1a",
+      "properties": ["medium", "256-findings", "raw-text-states", "diagnostic-serialization"],
+      "expected_img_alt_findings": 256
+    },
+    {
+      "path": "agent-report-large.html",
+      "bytes": 16777216,
+      "sha256": "99aac4114564405c1408aff8a5d8cb0cb42dc6f4b03d101bafc7181258e8f7d8",
+      "properties": ["large", "clean", "generated-report", "cache-and-throughput"],
+      "expected_img_alt_findings": 0
+    }
+  ]
+}

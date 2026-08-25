@@ -1,0 +1,11 @@
+{
+  "rules": {},
+  "nodeRules": [
+    {
+      "selector": "img",
+      "rules": {
+        "required-attr": ["alt"]
+      }
+    }
+  ]
+}

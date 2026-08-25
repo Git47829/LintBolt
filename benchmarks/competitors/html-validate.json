@@ -1,0 +1,6 @@
+{
+  "extends": [],
+  "rules": {
+    "wcag/h37": "error"
+  }
+}

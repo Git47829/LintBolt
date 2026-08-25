@@ -1,0 +1,43 @@
+{
+  "tools": [
+    {
+      "name": "html-lint",
+      "version": "0.1.0-specialized-emitter",
+      "command": ["target/release/html-lint", "--rules", "common", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    },
+    {
+      "name": "biome",
+      "version": "2.5.10",
+      "command": ["node_modules/.bin/biome", "lint", "--only=a11y/useAltText", "--reporter=json", "--max-diagnostics=none", "{file}"],
+      "accepted_exit_codes": [0, 1],
+      "enabled": true,
+      "qualified_findings": [0, 256, 0]
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "agent-clean-small",
+      "path": "benchmarks/fixtures/agent-clean-small.html",
+      "warmups": 0,
+      "runs": 30,
+      "expected_findings": 0
+    },
+    {
+      "name": "agent-mixed-repair",
+      "path": "benchmarks/fixtures/agent-mixed-repair.html",
+      "warmups": 5,
+      "runs": 20,
+      "expected_findings": 256
+    },
+    {
+      "name": "agent-report-large",
+      "path": "benchmarks/fixtures/agent-report-large.html",
+      "warmups": 5,
+      "runs": 20,
+      "expected_findings": 0
+    }
+  ]
+}

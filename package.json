@@ -1,0 +1,11 @@
+{
+  "name": "agent-html-lint-benchmarks",
+  "private": true,
+  "description": "Pinned competitors for the agent-html-lint benchmark",
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "htmlhint": "1.9.2",
+    "html-validate": "11.10.0",
+    "markuplint": "4.18.3"
+  }
+}
