@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/assets/lintbolt-logo.png" alt="LintBolt logo" width="160">
   <p><code>html-lint</code></p>
   <h1>⚡ LintBolt</h1>
   <p><strong>The HTML linter for the Agent Era.</strong></p>
